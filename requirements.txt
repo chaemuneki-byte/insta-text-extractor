@@ -1,0 +1,13 @@
+fastapi>=0.115
+uvicorn>=0.32
+python-dotenv>=1.0
+yt-dlp>=2025.1.1
+faster-whisper>=1.1
+anthropic>=0.40
+requests>=2.31
+imageio-ffmpeg>=0.5
+easyocr>=1.7
+rapidocr>=3.4
+onnxruntime>=1.20
+transformers>=5.0
+sentencepiece>=0.2

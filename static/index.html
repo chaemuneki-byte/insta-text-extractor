@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>인스타 텍스트 추출기</title>
+<style>
+  :root {
+    --bg: #f6f6f8; --card: #ffffff; --text: #17171c; --muted: #6b6b76; --line: #e4e4ea;
+    --accent: #e1306c; --accent-2: #833ab4; --ok: #1f9d55; --err: #d93025; --chip: #f0f0f4; --tagc: #833ab4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f0f12; --card: #18181d; --text: #ececf1; --muted: #9a9aa6; --line: #2a2a32; --chip: #23232a; --tagc: #c48bf0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; line-height: 1.6; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h1 span { background: linear-gradient(90deg, var(--accent-2), var(--accent)); -webkit-background-clip: text; color: transparent; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .stack > * + * { margin-top: 16px; }
+  button, .btn { font: inherit; cursor: pointer; border: 0; border-radius: 10px; text-decoration: none; display: inline-block; }
+  .primary { padding: 12px 24px; font-weight: 700; color: #fff; background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+  .primary:disabled { opacity: .5; cursor: default; }
+  .ghost { padding: 6px 12px; font-size: 13px; background: var(--chip); color: var(--text); }
+  .ghost:hover { filter: brightness(0.95); }
+  textarea { width: 100%; resize: vertical; min-height: 92px; padding: 14px 16px; font: inherit; font-size: 15px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text); outline: none; }
+  textarea:focus { border-color: var(--accent); }
+  .formrow { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+  .hint { font-size: 13px; color: var(--muted); }
+  .formrow .primary { margin-left: auto; }
+  .error { margin-top: 12px; padding: 12px 14px; border-radius: 10px; color: var(--err);
+    background: color-mix(in srgb, var(--err) 10%, transparent); white-space: pre-wrap; font-size: 14px; }
+
+  /* 대기열 */
+  .qhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .qhead h2 { font-size: 16px; margin: 0; }
+  .qhead .ghost { margin-left: auto; }
+  .qrow { display: grid; grid-template-columns: 92px 1fr auto; gap: 12px; align-items: center; padding: 10px 12px;
+    border-radius: 10px; cursor: pointer; font-size: 14px; }
+  .qrow:hover { background: var(--chip); }
+  .qrow.sel { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .qrow .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .qrow .msg { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--chip); color: var(--muted); text-align: center; white-space: nowrap; }
+  .pill.run { color: #fff; background: var(--accent); animation: pulse 1s infinite alternate; }
+  .pill.done { color: #fff; background: var(--ok); }
+  .pill.error { color: #fff; background: var(--err); }
+  @keyframes pulse { to { opacity: .55; } }
+  .kind { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+  /* 결과 */
+  .rhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .rhead h2 { margin: 0; font-size: 18px; }
+  .rhead .sp { flex: 1; }
+  .engines { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .nav { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+  .nav button { width: 54px; height: 54px; padding: 0; border-radius: 8px; overflow: hidden; background: var(--chip); color: var(--muted); font-size: 13px; position: relative; }
+  .nav img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .nav span { position: absolute; left: 3px; top: 1px; font-size: 11px; color: #fff; text-shadow: 0 0 3px #000; }
+
+  .slide { display: grid; grid-template-columns: 300px 1fr; gap: 20px; }
+  @media (max-width: 860px) { .slide { grid-template-columns: 1fr; } }
+  .slide .media video, .slide .media img { width: 100%; border-radius: 10px; background: #000; max-height: 560px; object-fit: contain; display: block; }
+  .slide h3.stitle { margin: 0 0 10px; font-size: 15px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .block + .block { margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--line); }
+  .bhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .bhead b { font-size: 14px; }
+  .bhead .muted { color: var(--muted); font-size: 13px; }
+  .bhead .tg { margin-left: auto; display: flex; gap: 4px; }
+  .tab { padding: 4px 12px; font-size: 13px; background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .tab.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .cols.one { grid-template-columns: 1fr; }
+  @media (max-width: 600px) { .cols { grid-template-columns: 1fr; } }
+  .col h4 { margin: 0 0 6px; font-size: 13px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 600; }
+  .col h4 .ghost { margin-left: auto; padding: 3px 10px; font-size: 12px; }
+  .textbox { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+    white-space: pre-wrap; font-size: 15px; min-height: 80px; max-height: 420px; overflow: auto; }
+  .segs { display: flex; flex-direction: column; gap: 2px; max-height: 460px; overflow: auto; }
+  .seg { display: grid; grid-template-columns: 48px 1fr 1fr; gap: 12px; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; white-space: pre-wrap; }
+  .seg:hover { background: var(--chip); }
+  .seg.now { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .seg .t { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 2px; }
+  .seg.one { grid-template-columns: 48px 1fr; }
+  @media (max-width: 600px) { .seg { grid-template-columns: 44px 1fr; } .seg .ko { grid-column: 2; color: var(--muted); } }
+  .pinned { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .pinned span { font-size: 14px; padding: 8px 12px; border-radius: 8px; background: var(--chip); white-space: pre-wrap; }
+  .pinned small { display: block; color: var(--muted); margin-top: 4px; font-size: 13px; }
+  .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { padding: 4px 10px; border-radius: 999px; background: var(--chip); font-size: 13px; cursor: pointer; }
+  .tag b { color: var(--tagc); font-weight: 600; }
+  .tag small { color: var(--muted); margin-left: 4px; }
+
+  /* 영상 분석 */
+  .notice { font-size: 13px; color: var(--muted); background: var(--chip); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; }
+  .notice.err { color: var(--err); }
+  .asec { margin-top: 18px; }
+  .asec h3 { font-size: 15px; margin: 0 0 10px; }
+  .atitle { font-size: 17px; font-weight: 700; margin: 0 0 6px; }
+  .asum { margin: 0 0 8px; }
+  .apoints { margin: 0; padding-left: 20px; }
+  .apoints li { margin: 2px 0; }
+  .tl { display: flex; flex-direction: column; gap: 8px; }
+  .tlrow { display: grid; grid-template-columns: 64px 92px 1fr; gap: 12px; align-items: start; padding: 8px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); cursor: pointer; }
+  .tlrow:hover { border-color: var(--accent); }
+  .tlrow img { width: 64px; height: 114px; object-fit: cover; border-radius: 6px; background: #000; display: block; }
+  .tlrow .tm { font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .tlrow .desc { font-size: 14px; }
+  .tlrow .desc div + div { margin-top: 4px; }
+  .tlrow .lab { display: inline-block; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; margin-right: 6px; }
+  .tlrow .sub2 { color: var(--muted); font-size: 13px; }
+  @media (max-width: 600px) { .tlrow { grid-template-columns: 56px 1fr; } .tlrow .tm { grid-column: 2; } .tlrow .desc { grid-column: 1 / -1; } }
+  .script { display: flex; flex-direction: column; gap: 4px; }
+  .sline { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 15px; }
+  .sline:hover { background: var(--chip); }
+  .sline .t { color: var(--accent); font-size: 12px; padding-top: 3px; font-variant-numeric: tabular-nums; }
+  .sline small { display: block; color: var(--muted); font-size: 13px; }
+  .hitem { display: grid; grid-template-columns: 120px auto 1fr; gap: 12px; padding: 9px 12px; border-radius: 10px; cursor: pointer; font-size: 14px; align-items: baseline; }
+  .hitem:hover { background: var(--card); }
+  .hitem .d { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .hitem .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  @media (max-width: 600px) { .hitem { grid-template-columns: 1fr; gap: 0; } }
+  .section-title { font-size: 16px; margin: 28px 0 10px; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
+    padding: 8px 16px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
+  .toast.show { opacity: 1; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span>인스타</span> 텍스트 추출기</h1>
+  <p class="sub">릴스·카드뉴스 링크를 넣으면 음성, 화면 자막, 이미지 속 글자를 원문 그대로 뽑고 한국어로 옮겨 드려요.</p>
+
+  <div class="stack">
+    <div class="card">
+      <form id="form">
+        <textarea id="links" placeholder="https://www.instagram.com/reel/...&#10;https://www.instagram.com/p/...&#10;여러 개는 줄을 바꿔서 붙여넣으세요"></textarea>
+        <div class="formrow">
+          <span class="hint" id="linkCount">링크를 붙여넣어 주세요</span>
+          <span class="hint" id="engineHint"></span>
+          <button class="primary" id="go" type="submit">추출하기</button>
+        </div>
+      </form>
+      <div class="error" id="error" hidden></div>
+    </div>
+
+    <div class="card" id="queueCard" hidden>
+      <div class="qhead">
+        <h2>작업 목록</h2><span class="hint" id="qsum"></span>
+        <a class="ghost btn" id="exportAll" href="#">완료된 것 모두 TXT로 받기</a>
+      </div>
+      <div id="qlist"></div>
+    </div>
+
+    <div id="result" class="stack" hidden>
+      <div class="card">
+        <div class="rhead">
+          <h2 id="rTitle"></h2><span class="kind" id="rKind"></span><span class="sp"></span>
+          <a class="ghost btn" id="rOrig" href="#" target="_blank" rel="noopener">원본 보기 ↗</a>
+          <a class="ghost btn" id="rTxt" href="#">텍스트 TXT</a>
+          <a class="ghost btn" id="rZip" href="#">이미지·영상 전체 ZIP</a>
+        </div>
+        <div class="engines" id="rEngines"></div>
+        <div class="nav" id="rNav" hidden></div>
+      </div>
+
+      <div class="card" id="anaCard" hidden>
+        <div class="bhead"><b style="font-size:16px">🎬 영상 분석</b><span class="muted" id="anaEngine"></span>
+          <span class="tg">
+            <button class="ghost" id="anaRun">AI로 분석하기</button>
+            <a class="ghost btn" id="anaTxt" href="#">⬇ 제목·스크립트·타임라인 TXT</a>
+            <button class="ghost" id="anaCopy">전체 복사</button>
+          </span></div>
+        <div class="notice" id="anaNotice" hidden></div>
+        <div id="anaBody"></div>
+      </div>
+
+      <div class="card" id="capCard">
+        <div class="bhead"><b style="font-size:16px">캡션 &amp; 해시태그</b>
+          <span class="tg"><button class="ghost" id="copyCaption">캡션 전체 복사</button></span></div>
+        <div class="cols" id="capCols">
+          <div class="col"><h4>원문 캡션 <button class="ghost" data-copycap="body">복사</button></h4><div class="textbox" id="capBody"></div></div>
+          <div class="col" id="capKoCol"><h4>한국어 캡션 <button class="ghost" data-copycap="body_ko">복사</button></h4><div class="textbox" id="capBodyKo"></div></div>
+        </div>
+        <div id="tagWrap">
+          <div class="bhead" style="margin-top:16px"><b>해시태그</b><span class="muted" id="tagCount"></span>
+            <span class="tg"><button class="ghost" id="copyTags">해시태그 복사</button></span></div>
+          <div class="tags" id="tags"></div>
+        </div>
+        <div class="engines" id="mentions"></div>
+      </div>
+
+      <div id="slides" class="stack"></div>
+    </div>
+
+    <div id="historyBox" hidden>
+      <h2 class="section-title">최근 추출 기록</h2>
+      <div id="hlist"></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const LINK_RE = /https?:\/\/(?:www\.|m\.)?instagram\.com\/(?:[\w.]+\/)?(?:reel|reels|p|tv)\/[\w-]+/gi;
+const STATUS = { queued: "대기", downloading: "다운로드", transcribing: "음성 인식", ocr: "글자 읽기", translating: "번역", analyzing: "영상 분석", done: "완료", error: "실패" };
+let serverStatus = { claude: false };
+const KIND = (k, n) => k === "carousel" ? `캐러셀 ${n}장` : k === "image" ? "이미지" : k === "reel" ? "릴스" : "";
+
+let current = null, viewingId = null, autoOpen = false, pollTimer = null, sessionIds = [];
+
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1600); }
+async function copy(text, msg = "복사했어요") { await navigator.clipboard.writeText(text || ""); toast(msg); }
+
+// ---- 입력 ----
+$("#links").addEventListener("input", () => {
+  const n = new Set(($("#links").value.match(LINK_RE) || []).map((u) => u.toLowerCase())).size;
+  $("#linkCount").textContent = n ? `링크 ${n}개` : "링크를 붙여넣어 주세요";
+});
+
+$("#form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#error").hidden = true;
+  $("#go").disabled = true;
+  try {
+    const res = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: $("#links").value }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "요청 실패");
+    sessionIds.push(...data.ids);
+    $("#links").value = ""; $("#linkCount").textContent = `${data.ids.length}개를 작업 목록에 넣었어요`;
+    if (!viewingId) autoOpen = true;
+    pollQueue();
+  } catch (err) {
+    $("#error").textContent = err.message; $("#error").hidden = false;
+  } finally { $("#go").disabled = false; }
+});
+
+// ---- 대기열 ----
+async function pollQueue() {
+  clearTimeout(pollTimer);
+  let items = [];
+  try { items = await (await fetch("/api/queue")).json(); } catch { pollTimer = setTimeout(pollQueue, 2000); return; }
+  $("#queueCard").hidden = !items.length;
+  const active = items.filter((j) => !["done", "error"].includes(j.status));
+  const done = items.filter((j) => j.status === "done");
+  $("#qsum").textContent = `완료 ${done.length} / 전체 ${items.length}` + (active.length ? ` · 진행 중 ${active.length}` : "");
+  $("#exportAll").hidden = !done.length;
+  $("#exportAll").href = `/api/export?ids=${done.map((j) => j.id).join(",")}`;
+  $("#qlist").innerHTML = items.slice().reverse().map((j) => {
+    const cls = j.status === "done" ? "done" : j.status === "error" ? "error" : j.status === "queued" ? "" : "run";
+    const label = j.status === "queued" ? `대기 ${j.position || ""}` : STATUS[j.status] || j.status;
+    const who = j.uploader ? `@${j.uploader}` : j.url.replace(/^https?:\/\/(www\.)?/, "");
+    const msg = j.status === "done" ? (j.preview || "") : j.status === "error" ? j.message.split("\n")[0] : j.message;
+    return `<div class="qrow ${j.id === viewingId ? "sel" : ""}" data-id="${j.id}" data-status="${j.status}">
+      <span class="pill ${cls}">${esc(label)}</span>
+      <div style="min-width:0"><div class="who">${esc(who)}</div><div class="msg">${esc(msg)}</div></div>
+      <span class="kind">${esc(KIND(j.kind, j.slide_count))}</span></div>`;
+  }).join("");
+
+  if (autoOpen) {
+    const first = sessionIds.map((id) => items.find((j) => j.id === id)).find((j) => j && j.status === "done");
+    if (first) { autoOpen = false; openJob(first.id, true); }
+  }
+  if (active.length) pollTimer = setTimeout(pollQueue, 1000);
+  else loadHistory();
+}
+
+$("#qlist").addEventListener("click", async (e) => {
+  const row = e.target.closest(".qrow"); if (!row) return;
+  if (row.dataset.status === "done") openJob(row.dataset.id, true);
+  else if (row.dataset.status === "error") {
+    const j = await (await fetch(`/api/jobs/${row.dataset.id}`)).json();
+    $("#error").textContent = j.message; $("#error").hidden = false;
+  } else toast("아직 처리 중이에요");
+});
+
+async function openJob(id, scroll) {
+  const j = await (await fetch(`/api/jobs/${id}`)).json();
+  if (!j.result) return;
+  viewingId = id; $("#error").hidden = true;
+  show(j.result);
+  $$(".qrow").forEach((r) => r.classList.toggle("sel", r.dataset.id === id));
+  if (scroll) $("#result").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ---- 결과 ----
+function show(r) {
+  current = r;
+  $("#result").hidden = false;
+  const m = r.meta || {};
+  $("#rTitle").textContent = m.uploader ? `@${m.uploader}` : "게시물";
+  $("#rKind").textContent = KIND(m.kind, r.slides.length);
+  $("#rOrig").href = r.url;
+  $("#rTxt").href = `/api/jobs/${r.id}/txt`;
+  $("#rZip").href = `/api/jobs/${r.id}/zip`;
+  const e = r.engines || {};
+  $("#rEngines").textContent = [
+    e.speech && `음성: ${e.speech}`, e.screen && `화면 글자: ${e.screen}`,
+    e.ocr && `이미지 글자: ${e.ocr}`, e.translate && `번역: ${e.translate}`, r.created,
+  ].filter(Boolean).join(" · ");
+
+  const nav = $("#rNav");
+  nav.hidden = r.slides.length < 2;
+  nav.innerHTML = r.slides.map((s) => `<button data-go="${s.index}" title="${s.index}장">
+    ${s.type === "image" ? `<img src="${fileUrl(r, s)}" alt="" loading="lazy">` : "▶"}<span>${s.index}</span></button>`).join("");
+
+  renderCaption(r);
+  renderAnalysis(r);
+  $("#slides").innerHTML = r.slides.map((s) => slideHtml(r, s)).join("");
+  history.replaceState(null, "", `#${r.id}`);
+}
+
+const fileUrl = (r, s, dl) => `/api/jobs/${r.id}/file/${encodeURIComponent(s.file)}${dl ? "?download=1" : ""}`;
+
+function textCols(orig, ko, label, copyKey) {
+  const same = !ko || ko === orig;
+  return `<div class="cols ${same ? "one" : ""}">
+    <div class="col"><h4>원문 ${label ? `<span style="font-weight:400">(${esc(label)})</span>` : ""}
+      <button class="ghost" data-copy="${copyKey}:orig">복사</button></h4><div class="textbox">${esc(orig)}</div></div>
+    ${same ? "" : `<div class="col"><h4>한국어 <button class="ghost" data-copy="${copyKey}:ko">복사</button></h4><div class="textbox">${esc(ko)}</div></div>`}
+  </div>`;
+}
+
+function segBlock(r, s, kind, title, data, label) {
+  const segs = data.segments || [];
+  const key = `${s.index}:${kind}`;
+  const pinned = kind === "screen" && data.pinned && data.pinned.length
+    ? `<div class="pinned">${data.pinned.map((p, i) => `<span>📌 ${esc(p)}${data.pinned_ko[i] && data.pinned_ko[i] !== p ? `<small>${esc(data.pinned_ko[i])}</small>` : ""}</span>`).join("")}</div>` : "";
+  if (!segs.length && !pinned) return "";
+  const orig = segs.map((x) => x.text).join("\n");
+  const ko = segs.map((x) => x.ko).join("\n");
+  const same = orig === ko;
+  return `<div class="block" data-block="${key}">
+    <div class="bhead"><b>${title}</b>${label ? `<span class="muted">${esc(label)}</span>` : ""}
+      ${segs.length ? `<span class="tg"><button class="tab on" data-view="full">전체</button><button class="tab" data-view="segs">타임라인</button></span>` : ""}</div>
+    ${pinned}
+    ${segs.length ? `<div class="v-full">${textCols(orig, same ? "" : ko, "", key)}</div>
+    <div class="v-segs segs" hidden>${segs.map((x) => `<div class="seg ${same ? "one" : ""}" data-start="${x.start}" data-end="${x.end}">
+      <span class="t">${clock(x.start)}</span><span>${esc(x.text)}</span>${same ? "" : `<span class="ko">${esc(x.ko)}</span>`}</div>`).join("")}</div>
+    <div class="row"><a class="ghost btn" href="/api/jobs/${r.id}/srt?slide=${s.index}&kind=${kind}&lang=orig">SRT 원문</a>
+      ${same ? "" : `<a class="ghost btn" href="/api/jobs/${r.id}/srt?slide=${s.index}&kind=${kind}&lang=ko">SRT 한국어</a>`}</div>` : ""}
+  </div>`;
+}
+
+function slideHtml(r, s) {
+  const multi = r.slides.length > 1;
+  const title = multi ? `${s.index}장 · ${s.type === "image" ? "이미지" : "영상"}` : (s.type === "image" ? "이미지" : "영상");
+  let media, body;
+  if (s.type === "image") {
+    media = `<img src="${fileUrl(r, s)}" alt="${s.index}장">`;
+    const o = s.ocr || {};
+    body = o.text ? textCols(o.text, o.ko, "", `${s.index}:img`) : `<div class="empty">이미지에서 글자를 찾지 못했어요.</div>`;
+  } else {
+    media = `<video src="${fileUrl(r, s)}" controls playsinline preload="metadata" data-slide="${s.index}"></video>`;
+    const sp = s.speech || { segments: [] };
+    const sc = s.screen || { segments: [], pinned: [] };
+    body = segBlock(r, s, "speech", "🗣️ 음성", sp, sp.language_name) + segBlock(r, s, "screen", "🔤 화면 속 글자 (자막)", sc, "");
+    if (!body) body = `<div class="empty">${sp.has_audio === false ? "소리가 없는 영상이고, " : ""}추출된 텍스트가 없어요.</div>`;
+  }
+  return `<div class="card slide" id="slide-${s.index}">
+    <div class="media">${media}<div class="row"><a class="ghost btn" href="${fileUrl(r, s, 1)}">⬇ ${s.type === "image" ? "이미지" : "영상"} 저장</a></div></div>
+    <div style="min-width:0"><h3 class="stitle">${title}</h3>${body}</div></div>`;
+}
+
+function findSeg(key) {
+  const [idx, kind] = key.split(":");
+  const s = current.slides.find((x) => String(x.index) === idx);
+  return { s, kind };
+}
+
+$("#slides").addEventListener("click", (e) => {
+  const tab = e.target.closest(".tab");
+  if (tab) {
+    const blk = tab.closest(".block");
+    $$(".tab", blk).forEach((t) => t.classList.toggle("on", t === tab));
+    $(".v-full", blk).hidden = tab.dataset.view !== "full";
+    $(".v-segs", blk).hidden = tab.dataset.view !== "segs";
+    return;
+  }
+  const seg = e.target.closest(".seg");
+  if (seg) {
+    const v = $("video", seg.closest(".slide"));
+    if (v) { v.currentTime = +seg.dataset.start; v.play(); }
+    return;
+  }
+  const cp = e.target.closest("[data-copy]");
+  if (cp) {
+    const [idx, kind, lang] = cp.dataset.copy.split(":");
+    const s = current.slides.find((x) => String(x.index) === idx);
+    if (kind === "img") return copy(lang === "ko" ? s.ocr.ko : s.ocr.text);
+    const segs = s[kind].segments;
+    return copy(segs.map((x) => (lang === "ko" ? x.ko : x.text)).join("\n"));
+  }
+});
+document.addEventListener("timeupdate", (e) => {
+  if (e.target.tagName !== "VIDEO") return;
+  const t = e.target.currentTime;
+  $$(".seg", e.target.closest(".slide")).forEach((el) => el.classList.toggle("now", t >= +el.dataset.start && t < +el.dataset.end));
+}, true);
+$("#rNav").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-go]");
+  if (b) document.getElementById(`slide-${b.dataset.go}`).scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+// ---- 영상 분석 리포트 ----
+const isReel = (r) => r.meta.kind === "reel" && r.slides.filter((s) => s.type === "video").length === 1;
+
+function renderAnalysis(r) {
+  const card = $("#anaCard");
+  card.hidden = !isReel(r);
+  if (card.hidden) return;
+  const a = r.analysis;
+  const run = $("#anaRun");
+  $("#anaCopy").hidden = $("#anaTxt").hidden = !a;
+  $("#anaTxt").href = `/api/jobs/${r.id}/report`;
+  $("#anaEngine").textContent = a ? `· ${a.ai ? a.engine : "무료 모드" + (a.engine ? ` (${a.engine})` : "")}` : "";
+  const hasVisual = a && a.timeline.some((x) => x.visual);
+  run.hidden = false;
+  run.textContent = !a ? "영상 분석 만들기" : !hasVisual ? "화면 설명 추가하기" : "다시 분석";
+  run.disabled = false;
+
+  const n = $("#anaNotice");
+  n.classList.remove("err");
+  if (a && a.error) { n.textContent = a.error; n.classList.add("err"); n.hidden = false; }
+  else if (a && !a.ai) {
+    n.textContent = hasVisual
+      ? "무료 모드: 제목은 화면 문구·캡션에서 추정하고, 화면 설명은 내 PC의 이미지 AI가 장면을 보고 영어로 쓴 걸 번역했어요. 표현이 조금 어색할 수 있어요."
+      : "예전 방식으로 만든 분석이라 화면 설명이 없어요. 위 '화면 설명 추가하기'를 누르면 장면마다 화면 설명이 채워져요.";
+    n.hidden = false;
+  } else n.hidden = true;
+  if (!a) { $("#anaBody").innerHTML = `<div class="empty">예전에 추출한 결과라 분석이 없어요. 위 버튼을 누르면 만들어져요.</div>`; return; }
+
+  const t = a.topic;
+  const topic = t && t.title
+    ? `<p class="atitle">${esc(t.title)}</p>${t.auto && t.source ? `<div class="sub2" style="color:var(--muted);font-size:13px;margin:-2px 0 6px">자동 추정 · ${esc(t.source)} 기준</div>` : ""}
+       ${t.summary ? `<p class="asum">${esc(t.summary)}</p>` : ""}
+       ${t.points && t.points.length ? `<ul class="apoints">${t.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}`
+    : `<div class="empty">제목으로 쓸 만한 화면 문구나 캡션이 없어요.</div>`;
+  const vsum = a.visual_summary ? `<div class="notice" style="color:var(--text)"><b>전체 화면 구성</b> · ${esc(a.visual_summary)}</div>` : "";
+
+  const tl = a.timeline.length ? `<div class="tl">${a.timeline.map((x) => {
+    const cap = x.caption_ko || x.caption;
+    const capOrig = x.caption && x.caption_ko && x.caption !== x.caption_ko ? x.caption : "";
+    return `<div class="tlrow" data-start="${x.start}">
+      <img src="/api/jobs/${r.id}/file/${encodeURIComponent(x.thumb)}" alt="" loading="lazy">
+      <span class="tm">${clock(x.start)} ~ ${clock(x.end)}</span>
+      <div class="desc">
+        ${x.visual ? `<div><span class="lab">화면</span>${esc(x.visual)}</div>` : ""}
+        ${cap ? `<div><span class="lab">자막</span>"${esc(cap)}"${capOrig ? `<div class="sub2">${esc(capOrig)}</div>` : ""}</div>` : ""}
+        ${x.speech_ko ? `<div class="sub2"><span class="lab">음성</span>${esc(x.speech_ko)}</div>` : ""}
+        ${!x.visual && !cap && !x.speech_ko ? `<div class="sub2">(이 장면에는 자막·음성이 없어요)</div>` : ""}
+      </div></div>`;
+  }).join("")}</div>` : `<div class="empty">장면 정보가 없어요.</div>`;
+
+  const sc = a.script.length ? `<div class="script">${a.script.map((s) => `<div class="sline" data-start="${s.start}">
+      <span class="t">${clock(s.start)}</span><span>"${esc(s.ko)}"${s.orig && s.orig !== s.ko ? `<small>${esc(s.orig)}</small>` : ""}</span></div>`).join("")}</div>`
+    : `<div class="empty">말소리와 화면 자막이 없는 영상이에요.</div>`;
+  const srcLabel = a.script_source === "screen" ? " (말소리가 없어서 화면 자막으로 정리)" : "";
+
+  $("#anaBody").innerHTML = `
+    <div class="asec"><h3>1) 제목</h3>${topic}</div>
+    <div class="asec"><h3>2) 스크립트<span class="muted" style="font-weight:400;font-size:13px">${srcLabel}</span></h3>${sc}</div>
+    <div class="asec"><h3>3) 타임라인과 화면 구성</h3>${vsum}${tl}</div>`;
+}
+
+$("#anaBody").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-start]"); if (!row) return;
+  const v = $("#slides video");
+  if (v) { v.currentTime = +row.dataset.start; v.play(); v.scrollIntoView({ behavior: "smooth", block: "center" }); }
+});
+$("#anaCopy").addEventListener("click", () => current && current.analysis && copy(current.analysis.report_text, "분석 리포트를 복사했어요"));
+$("#anaRun").addEventListener("click", async () => {
+  if (!current) return;
+  const b = $("#anaRun"); b.disabled = true; b.textContent = "분석 중… (1~3분 걸려요)";
+  try {
+    const res = await fetch(`/api/jobs/${current.id}/analyze`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "분석 실패");
+    show(data); toast("분석을 마쳤어요");
+  } catch (err) { toast(err.message); b.disabled = false; b.textContent = "다시 시도"; }
+});
+
+function renderCaption(r) {
+  const c = r.caption || { full: "", body: "", body_ko: "", hashtags: [], mentions: [] };
+  $("#capCard").hidden = !c.full;
+  $("#capBody").textContent = c.body || "(본문 없음)";
+  $("#capKoCol").hidden = !!c.is_korean || !c.body_ko || c.body_ko === c.body;
+  $("#capCols").classList.toggle("one", $("#capKoCol").hidden);
+  $("#capBodyKo").textContent = c.body_ko || "";
+  $("#tagWrap").hidden = !c.hashtags.length;
+  $("#tagCount").textContent = `(${c.hashtags.length}개)`;
+  $("#tags").innerHTML = c.hashtags.map((h) =>
+    `<span class="tag" data-tag="${esc(h.tag)}"><b>${esc(h.tag)}</b>${h.ko && h.ko !== h.tag.slice(1) ? `<small>${esc(h.ko)}</small>` : ""}</span>`).join("");
+  $("#mentions").textContent = c.mentions.length ? `멘션: ${c.mentions.join(" ")}` : "";
+}
+$("#copyCaption").addEventListener("click", () => current && copy(current.caption.full));
+$("#copyTags").addEventListener("click", () => current && copy(current.caption.hashtags.map((h) => h.tag).join(" "), "해시태그를 복사했어요"));
+$$("[data-copycap]").forEach((b) => b.addEventListener("click", () => current && copy(current.caption[b.dataset.copycap])));
+$("#tags").addEventListener("click", (e) => { const t = e.target.closest(".tag"); if (t) copy(t.dataset.tag); });
+
+// ---- 기록 ----
+async function loadHistory() {
+  try {
+    const items = await (await fetch("/api/history")).json();
+    $("#historyBox").hidden = !items.length;
+    $("#hlist").innerHTML = items.map((h) => `<div class="hitem" data-id="${h.id}"><span class="d">${esc(h.created)}</span>
+      <b>${esc(h.uploader ? "@" + h.uploader : h.id)} <span class="kind">${esc(KIND(h.kind, h.slide_count))}</span></b>
+      <span class="p">${esc(h.preview)}</span></div>`).join("");
+  } catch {}
+}
+$("#hlist").addEventListener("click", (e) => {
+  const it = e.target.closest(".hitem");
+  if (it) { openJob(it.dataset.id, false); window.scrollTo({ top: 0, behavior: "smooth" }); }
+});
+
+(async () => {
+  try {
+    const st = await (await fetch("/api/status")).json();
+    serverStatus = st;
+    $("#engineHint").textContent = st.claude ? "· Claude로 번역·글자 인식" : "· 무료 모드 (Google 번역)";
+  } catch {}
+  loadHistory();
+  pollQueue();
+  if (location.hash.length > 1) openJob(location.hash.slice(1), false);
+})();
+window.addEventListener("hashchange", () => {
+  const id = location.hash.slice(1);
+  if (id && id !== (current && current.id)) openJob(id, false);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# 실행 환경 (각자 PC에서 자동 생성)
+.venv/
+.bin/
+__pycache__/
+*.pyc
+
+# 개인 정보 - 절대 올리지 마세요
+.env
+cookies.txt
+
+# 추출 결과 (다운로드한 영상)
+downloads/
+
+# 기타
+.claude/
+.DS_Store
+Thumbs.db
