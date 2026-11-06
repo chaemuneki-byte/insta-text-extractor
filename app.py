@@ -667,8 +667,44 @@ def translate_local(texts: list[str], src: str = "en") -> list[str]:
         return out
 
 
-def translate(texts: list[str]) -> tuple[list[str], str]:
-    """한국어가 아닌 항목만 번역. (번역 목록, 사용한 엔진) 반환."""
+_google_blocked_until = 0.0  # Google이 막히면 잠시 건너뛰고 바로 내 PC 번역 사용
+
+
+def _detect_lang(text: str, hint: str | None) -> str:
+    """M2M100에 넘길 원문 언어 코드. 감지 실패 시 hint(영상 음성 언어) → 영어."""
+    try:
+        from langdetect import DetectorFactory, detect
+
+        DetectorFactory.seed = 0
+        code = detect(text) if len(re.sub(r"\W", "", text)) >= 4 else ""
+    except Exception:  # noqa: BLE001
+        code = ""
+    code = {"zh-cn": "zh", "zh-tw": "zh", "tl": "tl", "he": "he", "iw": "he"}.get(code, code)
+    return code or hint or "en"
+
+
+def translate_local_any(texts: list[str], hint: str | None = None) -> list[str]:
+    """언어를 감지해서 언어별로 묶어 내 PC 번역. 지원하지 않는 언어는 원문 유지."""
+    out = list(texts)
+    groups: dict[str, list[int]] = {}
+    for k, t in enumerate(texts):
+        groups.setdefault(_detect_lang(t, hint), []).append(k)
+    for lang, ks in groups.items():
+        if lang == "ko":
+            continue
+        try:
+            res = translate_local([_join_layout_lines(texts[k]) for k in ks], src=lang)
+        except Exception as e:  # noqa: BLE001  (지원 안 하는 언어 등)
+            print(f"[translate] 내 PC 번역 실패 ({lang}): {e}")
+            continue
+        for k, t in zip(ks, res):
+            out[k] = t.replace("<unk>", "").strip()
+    return out
+
+
+def translate(texts: list[str], hint: str | None = None) -> tuple[list[str], str]:
+    """한국어가 아닌 항목만 번역. (번역 목록, 사용한 엔진) 반환. hint = 영상 음성 언어 코드."""
+    global _google_blocked_until
     idx = [i for i, t in enumerate(texts) if t.strip() and not looks_korean(t)]
     out = list(texts)
     if not idx:
@@ -681,25 +717,23 @@ def translate(texts: list[str]) -> tuple[list[str], str]:
             done, engine = translate_claude(todo), "Claude"
         except Exception as e:  # noqa: BLE001
             print(f"[translate] Claude 실패, Google로 대체: {e}")
-    if done is None:
+    if done is None and time.time() >= _google_blocked_until:
         try:
             done = translate_google(todo)
         except Exception as e:  # noqa: BLE001
-            # Google이 막히면 영어 문장은 내 PC 번역으로, 나머지는 원문 유지 (결과는 살려서 보여줌)
-            print(f"[translate] Google 번역 실패 → 내 PC 번역으로 대체: {e}")
-            eng = [k for k, t in enumerate(todo) if _is_english(t)]
-            if not eng:
-                return out, "번역 실패 (Google이 잠시 막음 · 원문 유지)"
-            try:
-                local = translate_local([_join_layout_lines(todo[k]) for k in eng])
-            except Exception as e2:  # noqa: BLE001
-                traceback.print_exc()
-                print(f"[translate] 내 PC 번역도 실패: {e2}")
-                return out, "번역 실패 (Google이 잠시 막음 · 원문 유지)"
-            done = list(todo)
-            for k, t in zip(eng, local):
-                done[k] = t
-            engine = LOCAL_MT_LABEL if len(eng) == len(todo) else f"{LOCAL_MT_LABEL} · 영어 외 원문 유지"
+            print(f"[translate] Google 번역 실패 → 10분간 내 PC 번역 사용: {e}")
+            _google_blocked_until = time.time() + 600
+    if done is None:
+        # Google이 막혔을 때: 내 PC 번역 (100개 언어, 언어 자동 감지)
+        try:
+            done = translate_local_any(todo, hint)
+            engine = LOCAL_MT_LABEL
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            print(f"[translate] 내 PC 번역도 실패: {e}")
+            return out, "번역 실패 (원문 유지)"
+        if sum(1 for a, b in zip(todo, done) if a == b) > len(todo) // 2:
+            engine = f"{LOCAL_MT_LABEL} · 일부 원문 유지"
     for i, t in zip(idx, done):
         out[i] = t
     return out, engine
@@ -883,7 +917,9 @@ def translate_result(result: dict, status) -> str:
     if not any(not looks_korean(t) for t in texts):
         return ""
     status("translating", "한국어로 번역 중…")
-    out, engine = translate(texts)
+    hint = next((sl["speech"].get("language") for sl in result["slides"]
+                 if sl["type"] == "video" and sl["speech"].get("language")), None)
+    out, engine = translate(texts, hint)
     for (container, key), t in zip(refs, out):
         container[key] = t
     return engine
@@ -1640,6 +1676,35 @@ def reanalyze(job_id: str):
         r.setdefault("engines", {})
         if r["analysis"].get("engine"):
             r["engines"]["analysis"] = r["analysis"]["engine"]
+        (job_dir / "result.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
+    with jobs_lock:
+        if job_id in jobs:
+            jobs[job_id]["result"] = r
+    return r
+
+
+@app.post("/api/jobs/{job_id}/retranslate")
+def retranslate(job_id: str):
+    """번역을 다시 실행 (예: 번역이 막혀서 원문 그대로 남은 결과)."""
+    r = load_result(job_id)
+    job_dir = DOWNLOADS / job_id
+    with _analyze_lock:
+        for sl in r["slides"]:
+            if sl["type"] == "image":
+                sl["ocr"]["ko"] = sl["ocr"]["text"]
+            else:
+                for s in sl["speech"]["segments"] + sl["screen"]["segments"]:
+                    s["ko"] = s["text"]
+                sl["screen"]["pinned_ko"] = list(sl["screen"]["pinned"])
+        cap = r["caption"]
+        cap["body_ko"] = cap["body"]
+        for h in cap["hashtags"]:
+            h["ko"] = ""
+        engine = translate_result(r, lambda st, m: None)
+        r.setdefault("engines", {})["translate"] = engine
+        if analysis_target(r):
+            r["analysis"] = build_analysis(r, job_dir)
+        r["preview"] = preview_text(r)
         (job_dir / "result.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
     with jobs_lock:
         if job_id in jobs:

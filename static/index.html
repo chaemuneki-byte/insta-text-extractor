@@ -174,6 +174,7 @@
           <a class="ghost btn" id="rOrig" href="#" target="_blank" rel="noopener">원본 보기 ↗</a>
           <a class="ghost btn" id="rTxt" href="#">텍스트 TXT</a>
           <a class="ghost btn" id="rZip" href="#">이미지·영상 전체 ZIP</a>
+          <button class="ghost" id="rRetranslate" title="번역이 안 됐거나 원문 그대로 남아 있을 때 다시 번역해요">🔄 다시 번역</button>
           <button class="ghost danger" id="rDelete">🗑 삭제</button>
         </div>
         <div class="engines" id="rEngines"></div>
@@ -562,6 +563,17 @@ async function deleteJob(id) {
   loadHistory(); pollQueue();
 }
 $("#rDelete").addEventListener("click", () => current && deleteJob(current.id));
+$("#rRetranslate").addEventListener("click", async () => {
+  if (!current) return;
+  const b = $("#rRetranslate"); b.disabled = true; b.textContent = "번역 중… (1~2분)";
+  try {
+    const res = await fetch(`/api/jobs/${current.id}/retranslate`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "번역 실패");
+    releaseMedia(); show(data); toast("다시 번역했어요");
+  } catch (err) { toast(err.message); }
+  finally { b.disabled = false; b.textContent = "🔄 다시 번역"; }
+});
 $("#deleteAll").addEventListener("click", async () => {
   const n = $$("#hlist .hitem").length;
   if (!confirm(`추출 기록 ${n}개를 모두 삭제할까요?\n내려받은 영상·이미지와 텍스트가 전부 지워지고 되돌릴 수 없어요.\n(지금 처리 중인 작업은 남겨둬요)`)) return;
