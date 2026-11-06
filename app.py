@@ -1258,7 +1258,11 @@ def worker():
     while True:
         job_id = job_queue.get()
         try:
-            run_job(job_id, jobs[job_id]["url"])
+            with jobs_lock:
+                job = jobs.get(job_id)
+            if not job or job.get("status") == "canceled":  # 대기 중에 삭제된 작업
+                continue
+            run_job(job_id, job["url"])
         finally:
             job_queue.task_done()
             time.sleep(3)  # 인스타그램 요청 간격 (너무 빠르면 잠깐 차단됨)
@@ -1465,6 +1469,84 @@ def history():
         })
     items.sort(key=lambda x: x["created"], reverse=True)
     return items[:50]
+
+
+# ----------------------------------------------------------- 정리(삭제) ---
+
+ACTIVE = {"downloading", "transcribing", "ocr", "translating", "analyzing"}
+
+
+def _folder_size(p: Path) -> int:
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+
+
+def _remove_folder(p: Path) -> bool:
+    """폴더 삭제. 윈도우에서 영상이 재생 중이라 잠겨 있으면 잠깐 기다렸다 다시 시도."""
+    import shutil
+
+    for _ in range(5):
+        shutil.rmtree(p, ignore_errors=True)
+        if not p.exists():
+            return True
+        time.sleep(0.5)
+    return False
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str):
+    """결과 하나 삭제 (영상·이미지·텍스트 모두)."""
+    if not re.fullmatch(r"[0-9a-f]{12}", job_id):
+        raise HTTPException(404, "작업을 찾을 수 없습니다")
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job and job.get("status") in ACTIVE:
+            raise HTTPException(409, "지금 처리 중인 작업은 끝난 뒤에 삭제할 수 있어요")
+        if job:
+            job["status"] = "canceled"  # 대기 중이었다면 처리하지 않도록
+            jobs.pop(job_id, None)
+            if job_id in job_order:
+                job_order.remove(job_id)
+    folder = DOWNLOADS / job_id
+    if folder.exists() and not _remove_folder(folder):
+        raise HTTPException(409, "파일이 사용 중이라 지우지 못했어요. 영상 재생을 멈추고 다시 시도해 주세요")
+    return {"ok": True}
+
+
+@app.delete("/api/history")
+def delete_all():
+    """처리 중인 작업을 뺀 모든 결과 삭제."""
+    with jobs_lock:
+        busy = {jid for jid, j in jobs.items() if j.get("status") in ACTIVE or j.get("status") == "queued"}
+        for jid in [j for j in job_order if j not in busy]:
+            job_order.remove(jid)
+            jobs.pop(jid, None)
+    removed, failed, freed = 0, 0, 0
+    for folder in DOWNLOADS.iterdir():
+        if not folder.is_dir() or folder.name in busy:
+            continue
+        size = _folder_size(folder)
+        if _remove_folder(folder):
+            removed, freed = removed + 1, freed + size
+        else:
+            failed += 1
+    return {"removed": removed, "failed": failed, "freed_mb": round(freed / 1024 / 1024, 1)}
+
+
+@app.post("/api/queue/clear")
+def clear_queue():
+    """작업 목록에서 끝난 항목만 지움 (결과 파일은 그대로, 기록에서 다시 볼 수 있음)."""
+    with jobs_lock:
+        for jid in list(job_order):
+            if jobs.get(jid, {}).get("status") in ("done", "error", "canceled"):
+                job_order.remove(jid)
+    return {"ok": True}
+
+
+@app.get("/api/storage")
+def storage():
+    folders = [p for p in DOWNLOADS.iterdir() if p.is_dir()]
+    total = sum(_folder_size(p) for p in folders)
+    return {"count": len(folders), "mb": round(total / 1024 / 1024, 1)}
 
 
 def _slide_path(job_id: str, name: str) -> Path:

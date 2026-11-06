@@ -122,8 +122,14 @@
   .sline:hover { background: var(--chip); }
   .sline .t { color: var(--accent); font-size: 12px; padding-top: 3px; font-variant-numeric: tabular-nums; }
   .sline small { display: block; color: var(--muted); font-size: 13px; }
-  .hitem { display: grid; grid-template-columns: 120px auto 1fr; gap: 12px; padding: 9px 12px; border-radius: 10px; cursor: pointer; font-size: 14px; align-items: baseline; }
+  .hitem { display: grid; grid-template-columns: 120px auto 1fr 32px; gap: 12px; padding: 9px 12px; border-radius: 10px; cursor: pointer; font-size: 14px; align-items: baseline; }
   .hitem:hover { background: var(--card); }
+  .hitem .del { visibility: hidden; padding: 2px 6px; font-size: 13px; background: transparent; color: var(--muted); }
+  .hitem:hover .del { visibility: visible; }
+  .hitem .del:hover { color: var(--err); }
+  @media (hover: none) { .hitem .del { visibility: visible; } }
+  .danger:hover { color: var(--err); }
+  #clearQueue { margin-left: 0; }
   .hitem .d { color: var(--muted); font-size: 12px; white-space: nowrap; }
   .hitem .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
   @media (max-width: 600px) { .hitem { grid-template-columns: 1fr; gap: 0; } }
@@ -156,6 +162,7 @@
       <div class="qhead">
         <h2>작업 목록</h2><span class="hint" id="qsum"></span>
         <a class="ghost btn" id="exportAll" href="#">완료된 것 모두 TXT로 받기</a>
+        <button class="ghost" id="clearQueue" title="끝난 항목을 목록에서만 지워요. 결과는 아래 기록에 남아요">목록 비우기</button>
       </div>
       <div id="qlist"></div>
     </div>
@@ -167,6 +174,7 @@
           <a class="ghost btn" id="rOrig" href="#" target="_blank" rel="noopener">원본 보기 ↗</a>
           <a class="ghost btn" id="rTxt" href="#">텍스트 TXT</a>
           <a class="ghost btn" id="rZip" href="#">이미지·영상 전체 ZIP</a>
+          <button class="ghost danger" id="rDelete">🗑 삭제</button>
         </div>
         <div class="engines" id="rEngines"></div>
         <div class="nav" id="rNav" hidden></div>
@@ -202,7 +210,10 @@
     </div>
 
     <div id="historyBox" hidden>
-      <h2 class="section-title">최근 추출 기록</h2>
+      <div class="qhead" style="margin:28px 0 10px">
+        <h2 style="font-size:16px;margin:0">최근 추출 기록</h2><span class="hint" id="storageInfo"></span>
+        <button class="ghost danger" id="deleteAll">🗑 전체 삭제</button>
+      </div>
       <div id="hlist"></div>
     </div>
   </div>
@@ -258,6 +269,7 @@ async function pollQueue() {
   const done = items.filter((j) => j.status === "done");
   $("#qsum").textContent = `완료 ${done.length} / 전체 ${items.length}` + (active.length ? ` · 진행 중 ${active.length}` : "");
   $("#exportAll").hidden = !done.length;
+  $("#clearQueue").hidden = !items.some((j) => ["done", "error"].includes(j.status));
   $("#exportAll").href = `/api/export?ids=${done.map((j) => j.id).join(",")}`;
   $("#qlist").innerHTML = items.slice().reverse().map((j) => {
     const cls = j.status === "done" ? "done" : j.status === "error" ? "error" : j.status === "queued" ? "" : "run";
@@ -518,12 +530,49 @@ async function loadHistory() {
     $("#historyBox").hidden = !items.length;
     $("#hlist").innerHTML = items.map((h) => `<div class="hitem" data-id="${h.id}"><span class="d">${esc(h.created)}</span>
       <b>${esc(h.uploader ? "@" + h.uploader : h.id)} <span class="kind">${esc(KIND(h.kind, h.slide_count))}</span></b>
-      <span class="p">${esc(h.preview)}</span></div>`).join("");
+      <span class="p">${esc(h.preview)}</span><button class="del" title="이 기록 삭제">🗑</button></div>`).join("");
+    const st = await (await fetch("/api/storage")).json();
+    $("#storageInfo").textContent = `· 저장 공간 ${st.mb >= 1024 ? (st.mb / 1024).toFixed(1) + "GB" : st.mb + "MB"} 사용 중`;
   } catch {}
 }
 $("#hlist").addEventListener("click", (e) => {
-  const it = e.target.closest(".hitem");
-  if (it) { openJob(it.dataset.id, false); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  const it = e.target.closest(".hitem"); if (!it) return;
+  if (e.target.closest(".del")) { deleteJob(it.dataset.id); return; }
+  openJob(it.dataset.id, false); window.scrollTo({ top: 0, behavior: "smooth" });
+});
+
+// ---- 삭제 ----
+function releaseMedia() {
+  // 재생 중인 영상이 파일을 잡고 있으면 윈도우에서 삭제가 안 되므로 먼저 놓아줌
+  $$("#result video").forEach((v) => { v.pause(); v.removeAttribute("src"); v.load(); });
+}
+function closeResult() {
+  releaseMedia();
+  current = null; viewingId = null;
+  $("#result").hidden = true; $("#slides").innerHTML = "";
+  history.replaceState(null, "", location.pathname);
+}
+async function deleteJob(id) {
+  if (!confirm("이 결과를 삭제할까요?\n내려받은 영상·이미지와 추출한 텍스트가 모두 지워져요.")) return;
+  if (current && current.id === id) closeResult();
+  const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { toast(data.detail || "삭제하지 못했어요"); return; }
+  toast("삭제했어요");
+  loadHistory(); pollQueue();
+}
+$("#rDelete").addEventListener("click", () => current && deleteJob(current.id));
+$("#deleteAll").addEventListener("click", async () => {
+  const n = $$("#hlist .hitem").length;
+  if (!confirm(`추출 기록 ${n}개를 모두 삭제할까요?\n내려받은 영상·이미지와 텍스트가 전부 지워지고 되돌릴 수 없어요.\n(지금 처리 중인 작업은 남겨둬요)`)) return;
+  closeResult();
+  const r = await (await fetch("/api/history", { method: "DELETE" })).json();
+  toast(r.failed ? `${r.removed}개 삭제 · ${r.failed}개는 사용 중이라 못 지웠어요` : `${r.removed}개 삭제했어요 (${r.freed_mb}MB 확보)`);
+  loadHistory(); pollQueue();
+});
+$("#clearQueue").addEventListener("click", async () => {
+  await fetch("/api/queue/clear", { method: "POST" });
+  pollQueue();
 });
 
 (async () => {
