@@ -7,16 +7,23 @@ $Host.UI.RawUI.WindowTitle = "인스타 영상 텍스트 추출기 (이 창을 �
 
 function Say($msg, $color = "Cyan") { Write-Host ""; Write-Host "▶ $msg" -ForegroundColor $color }
 
+# 지원하는 Python 버전: 3.10 ~ 3.14
+# (3.15 이상은 onnxruntime·scikit-image 등 필요한 부품이 아직 나오지 않아서 설치가 실패함)
+$PyCheck = "import sys; print(sys.executable) if (3, 10) <= sys.version_info[:2] <= (3, 14) else sys.exit(1)"
+
 function Test-Py($exe, [string[]]$pre = @()) {
     try {
-        $out = & $exe @pre -c "import sys; print(sys.executable) if sys.version_info >= (3, 10) else sys.exit(1)" 2>$null
+        $out = & $exe @pre -c $PyCheck 2>$null
         if ($LASTEXITCODE -eq 0 -and $out) { return ($out | Select-Object -Last 1).Trim() }
     } catch {}
     return $null
 }
 
 function Find-Python {
-    $p = Test-Py "py" @("-3"); if ($p) { return $p }
+    # 여러 버전이 깔려 있으면 검증된 버전부터 (최신 3.15 등은 건너뜀)
+    foreach ($v in @("3.13", "3.12", "3.14", "3.11", "3.10")) {
+        $p = Test-Py "py" @("-$v"); if ($p) { return $p }
+    }
     $p = Test-Py "python"; if ($p) { return $p }
     $roots = @("$env:LOCALAPPDATA\Programs\Python", "$env:ProgramFiles", "${env:ProgramFiles(x86)}")
     foreach ($root in $roots) {
@@ -43,15 +50,22 @@ try {
     }
     $venvPy = Join-Path $venvDir "Scripts\python.exe"
 
+    # 예전에 지원하지 않는 Python(3.15 등)으로 만든 실행 환경이면 지우고 다시 만들기
+    if ((Test-Path $venvPy) -and -not (Test-Py $venvPy)) {
+        Say "지원하지 않는 Python 버전으로 만든 실행 환경이라 다시 만들어요..." "Yellow"
+        Remove-Item -LiteralPath "\\?\$venvDir" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     # 1) Python
     if (-not (Test-Path $venvPy)) {
         $py = Find-Python
         if (-not $py) {
-            Say "Python이 없어서 자동으로 설치합니다 (1~3분)..."
+            Say "사용할 수 있는 Python(3.10~3.14)이 없어서 Python 3.12를 자동으로 설치합니다 (1~3분)..."
+            Say "(이미 최신 Python 3.15 이상이 깔려 있어도 괜찮아요. 3.12를 따로 하나 더 설치해서 이 프로그램에만 써요)" "DarkGray"
             if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-                Say "자동 설치를 할 수 없는 PC예요. 열리는 페이지에서 Python을 설치한 뒤 다시 실행해 주세요." "Yellow"
+                Say "자동 설치를 할 수 없는 PC예요. 열리는 페이지에서 'Python 3.12' 를 설치한 뒤 다시 실행해 주세요. (최신 3.15는 안 돼요)" "Yellow"
                 Say "설치 화면 맨 아래 'Add python.exe to PATH' 를 꼭 체크하세요!" "Yellow"
-                Start-Process "https://www.python.org/downloads/"
+                Start-Process "https://www.python.org/downloads/windows/"
                 exit 1
             }
             winget install -e --id Python.Python.3.12 --scope user --silent `
