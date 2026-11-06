@@ -21,6 +21,31 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+def _use_certifi():
+    """모든 HTTPS 다운로드가 certifi 인증서 묶음을 쓰도록 설정.
+    맥에서 python.org로 설치한 Python은 인증서가 연결돼 있지 않아서, AI 모델을 내려받을 때
+    'CERTIFICATE_VERIFY_FAILED' 오류가 남 (EasyOCR 등 urllib으로 받는 경우)."""
+    try:
+        import ssl
+
+        import certifi
+    except ImportError:
+        return
+    ca = certifi.where()
+    os.environ.setdefault("SSL_CERT_FILE", ca)
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", ca)
+    os.environ.setdefault("CURL_CA_BUNDLE", ca)
+
+    def _ctx(*args, **kwargs):
+        c = ssl.create_default_context(*args, **kwargs)  # 컴퓨터에 원래 있는 인증서 +
+        c.load_verify_locations(cafile=ca)                 # certifi 인증서 묶음
+        return c
+
+    ssl._create_default_https_context = _ctx  # noqa: SLF001
+
+
+_use_certifi()
+
 BASE = Path(__file__).resolve().parent
 load_dotenv(BASE / ".env")
 

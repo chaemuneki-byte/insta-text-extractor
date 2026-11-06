@@ -99,6 +99,10 @@
 
 > ⚠️ `cookies.txt` 는 내 인스타 로그인 정보예요. **절대 다른 사람에게 주지 마세요.**
 
+**맥에서 `CERTIFICATE_VERIFY_FAILED` 오류가 나요**
+python.org에서 설치한 Python이 인증서를 못 찾아서 생기는 문제예요. 최신 버전에서는 자동으로 해결되니 **ZIP을 다시 받아 덮어쓰고** `run.command` 를 실행하세요.
+그래도 나오면 Finder → 응용 프로그램 → `Python 3.x` 폴더의 **`Install Certificates.command`** 를 더블클릭한 뒤 다시 실행하세요.
+
 **"추출된 텍스트가 없어요"라고 나와요**
 말소리도, 화면 속 글자도 없는 영상·사진이에요.
 
